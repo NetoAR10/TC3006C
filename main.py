@@ -7,34 +7,26 @@ import pandas as pd
 # =============================
 def sigmoid(z):
     z = np.asarray(z, dtype=np.float64)
-    z = np.clip(z, -500, 500)
     return 1.0 / (1.0 + np.exp(-z))
 
 def hypothesis(X, theta):
-    return sigmoid(X @ theta)
+    return sigmoid(np.dot(X, theta))
 
 def log_loss(y_true, y_pred):
     eps = 1e-12
     p = np.clip(y_pred, eps, 1 - eps)
     return -np.mean(y_true * np.log(p) + (1 - y_true) * np.log(1 - p))
 
-def gradient_descent_logloss(X, y, theta, alpha, epochs, verbose_every=100):
+def gradient_descent_logloss(X, y, theta, alpha, epochs):
     n = y.shape[0]
-    for epoch in range(epochs):
-        p = hypothesis(X, theta)      
-        grad = (X.T @ (p - y)) / n
-        theta -= alpha * grad
-
-        if verbose_every and epoch % verbose_every == 0:
-            ll = log_loss(y, p)
-            print(f"Epoch {epoch:4d}  LogLoss: {ll:.6f}")
+    for _ in range(epochs):
+        p = hypothesis(X, theta) 
+        grad = np.dot(X.T, (p - y)) / n 
+        theta = theta - alpha * grad
     return theta
 
 def predict_proba(X, theta):
     return hypothesis(X, theta)
-
-def predict_label(X, theta, threshold=0.5):
-    return (predict_proba(X, theta) >= threshold).astype(int)
 
 def accuracy(y_true, y_hat):
     return np.mean(y_true == y_hat)
@@ -89,11 +81,11 @@ df[bin_cols] = df[bin_cols].apply(pd.to_numeric, errors="coerce").fillna(0).asty
 df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(np.float64)
 
 X_df = pd.concat([df[bin_cols], df[num_cols]], axis=1)
-y    = df[target_col].astype(np.float64).to_numpy()
+y = df[target_col].astype(np.float64).to_numpy()
 
 
 # =============================
-# 4) Split estratificado + estandarización
+# 4) Split y estandarización
 # =============================
 X_train_df, X_test_df, y_train, y_test = stratified_train_test_split(X_df, y, test_ratio=0.6)
 
@@ -109,7 +101,7 @@ X_test  = np.c_[np.ones(len(X_test_df),  dtype=np.float64), X_test_df.to_numpy(d
 theta0 = np.zeros(X_train.shape[1], dtype=np.float64)
 theta = gradient_descent_logloss(
     X_train, y_train, theta0,
-    alpha=0.1, epochs=1000, verbose_every=100
+    alpha=0.1, epochs=500
 )
 
 
