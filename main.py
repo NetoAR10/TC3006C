@@ -20,8 +20,8 @@ def log_loss(y_true, y_pred):
 def gradient_descent_logloss(X, y, theta, alpha, epochs):
     n = y.shape[0]
     for _ in range(epochs):
-        p = hypothesis(X, theta) 
-        grad = np.dot(X.T, (p - y)) / n 
+        p = hypothesis(X, theta)
+        grad = np.dot(X.T, (p - y)) / n
         theta = theta - alpha * grad
     return theta
 
@@ -36,35 +36,64 @@ def confusion_matrix_binary(y_true, y_hat):
     tn = int(np.sum((y_true == 0) & (y_hat == 0)))
     fp = int(np.sum((y_true == 0) & (y_hat == 1)))
     fn = int(np.sum((y_true == 1) & (y_hat == 0)))
+    # Devuelve en el mismo orden que ya usabas:
     return tp, fp, fn, tn
+
+# === NUEVO: Recall y F1 (binario) ===
+def recall_score_binary(y_true, y_hat):
+    """TP / (TP + FN)"""
+    tp, fp, fn, tn = confusion_matrix_binary(y_true, y_hat)
+    denom = tp + fn
+    return tp / denom if denom > 0 else 0.0
+
+def f1_score_binary(y_true, y_hat):
+    """2 * (precision * recall) / (precision + recall)"""
+    tp, fp, fn, tn = confusion_matrix_binary(y_true, y_hat)
+    prec_denom = tp + fp
+    rec_denom  = tp + fn
+    precision = tp / prec_denom if prec_denom > 0 else 0.0
+    recall    = tp / rec_denom  if rec_denom  > 0 else 0.0
+    return (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
 
 # =============================
 # 2) Utilidades de preprocesamiento
 # =============================
-def stratified_train_test_split(X_df, y, test_ratio):
-    rng = np.random.default_rng()
+def stratified_train_val_test_split(X_df, y, val_ratio=0.1, test_ratio=0.1, random_state=None):
+    assert 0 < val_ratio < 1 and 0 < test_ratio < 1 and val_ratio + test_ratio < 1
+    rng = np.random.default_rng(random_state)
     y = np.asarray(y).astype(int)
+
     idx_pos = np.where(y == 1)[0]
     idx_neg = np.where(y == 0)[0]
     rng.shuffle(idx_pos); rng.shuffle(idx_neg)
 
-    n_pos_test = int(len(idx_pos) * test_ratio)
-    n_neg_test = int(len(idx_neg) * test_ratio)
+    def split_indices(class_idx):
+        n = len(class_idx)
+        n_test = int(n * test_ratio)
+        n_val  = int(n * val_ratio)
+        test_i = class_idx[:n_test]
+        val_i  = class_idx[n_test:n_test + n_val]
+        train_i = class_idx[n_test + n_val:]
+        return train_i, val_i, test_i
 
-    test_idx = np.concatenate([idx_pos[:n_pos_test], idx_neg[:n_neg_test]])
-    train_idx = np.concatenate([idx_pos[n_pos_test:], idx_neg[n_neg_test:]])
-    rng.shuffle(test_idx); rng.shuffle(train_idx)
+    pos_train, pos_val, pos_test = split_indices(idx_pos)
+    neg_train, neg_val, neg_test = split_indices(idx_neg)
 
-    return (X_df.iloc[train_idx].copy(), X_df.iloc[test_idx].copy(),
-            y[train_idx].astype(np.float64), y[test_idx].astype(np.float64))
+    train_idx = np.concatenate([pos_train, neg_train])
+    val_idx   = np.concatenate([pos_val,   neg_val])
+    test_idx  = np.concatenate([pos_test,  neg_test])
 
-def standardize_train_test(X_train_df, X_test_df, numeric_cols):
-    means = X_train_df[numeric_cols].mean()
-    stds  = X_train_df[numeric_cols].std(ddof=0).replace(0, 1.0)
-    X_train_df[numeric_cols] = (X_train_df[numeric_cols] - means) / stds
-    X_test_df[numeric_cols]  = (X_test_df[numeric_cols]  - means) / stds
-    return means, stds
+    rng.shuffle(train_idx); rng.shuffle(val_idx); rng.shuffle(test_idx)
+
+    return (
+        X_df.iloc[train_idx].copy(),
+        X_df.iloc[val_idx].copy(),
+        X_df.iloc[test_idx].copy(),
+        y[train_idx].astype(np.float64),
+        y[val_idx].astype(np.float64),
+        y[test_idx].astype(np.float64),
+    )
 
 
 # =============================
@@ -74,8 +103,8 @@ CSV_PATH = "diabetes_prediction_dataset.csv"
 df = pd.read_csv(CSV_PATH)
 
 target_col = "diabetes"
-bin_cols = ["hypertension", "heart_disease"] 
-num_cols = ["age", "bmi", "HbA1c_level", "blood_glucose_level"] 
+bin_cols = ["hypertension", "heart_disease"]
+num_cols = ["age", "bmi", "HbA1c_level", "blood_glucose_level"]
 
 df[bin_cols] = df[bin_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(np.float64)
 df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce").fillna(0).astype(np.float64)
@@ -85,13 +114,20 @@ y = df[target_col].astype(np.float64).to_numpy()
 
 
 # =============================
-# 4) Split y estandarización
+# 4) Split (80/10/10) y estandarización
 # =============================
-X_train_df, X_test_df, y_train, y_test = stratified_train_test_split(X_df, y, test_ratio=0.6)
+X_train_df, X_val_df, X_test_df, y_train, y_val, y_test = stratified_train_val_test_split(
+    X_df, y, val_ratio=0.10, test_ratio=0.10, random_state=42
+)
 
-means, stds = standardize_train_test(X_train_df, X_test_df, numeric_cols=num_cols)
+means = X_train_df[num_cols].mean()
+stds  = X_train_df[num_cols].std(ddof=0).replace(0, 1.0)
+X_train_df[num_cols] = (X_train_df[num_cols] - means) / stds
+X_val_df[num_cols]   = (X_val_df[num_cols]   - means) / stds
+X_test_df[num_cols]  = (X_test_df[num_cols]  - means) / stds
 
 X_train = np.c_[np.ones(len(X_train_df), dtype=np.float64), X_train_df.to_numpy(dtype=np.float64)]
+X_val   = np.c_[np.ones(len(X_val_df),   dtype=np.float64), X_val_df.to_numpy(dtype=np.float64)]
 X_test  = np.c_[np.ones(len(X_test_df),  dtype=np.float64), X_test_df.to_numpy(dtype=np.float64)]
 
 
@@ -109,17 +145,30 @@ theta = gradient_descent_logloss(
 # 6) Evaluación
 # =============================
 p_train = predict_proba(X_train, theta)
+p_val   = predict_proba(X_val,   theta)
 p_test  = predict_proba(X_test,  theta)
 
 yhat_train = (p_train >= 0.5).astype(int)
+yhat_val   = (p_val   >= 0.5).astype(int)
 yhat_test  = (p_test  >= 0.5).astype(int)
 
-print("\n=== TRAIN ===")
+print("\n=== TRAIN (80%) ===")
 print("LogLoss:", log_loss(y_train, p_train))
 print("Accuracy:", accuracy(y_train, yhat_train))
+print("Recall:", recall_score_binary(y_train, yhat_train))
+print("F1:", f1_score_binary(y_train, yhat_train))
 print("Confusion (TP, FP, FN, TN):", confusion_matrix_binary(y_train, yhat_train))
 
-print("\n=== TEST ===")
+print("\n=== VALIDACIÓN (10%) ===")
+print("LogLoss:", log_loss(y_val, p_val))
+print("Accuracy:", accuracy(y_val, yhat_val))
+print("Recall:", recall_score_binary(y_val, yhat_val))
+print("F1:", f1_score_binary(y_val, yhat_val))
+print("Confusion (TP, FP, FN, TN):", confusion_matrix_binary(y_val, yhat_val))
+
+print("\n=== TEST (10%) ===")
 print("LogLoss:", log_loss(y_test, p_test))
 print("Accuracy:", accuracy(y_test, yhat_test))
+print("Recall:", recall_score_binary(y_test, yhat_test))
+print("F1:", f1_score_binary(y_test, yhat_test))
 print("Confusion (TP, FP, FN, TN):", confusion_matrix_binary(y_test, yhat_test))
